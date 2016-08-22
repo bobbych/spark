@@ -26,8 +26,9 @@ import scala.language.reflectiveCalls
 import scala.util.Try
 
 import org.apache.commons.io.{FileUtils, IOUtils}
+import org.apache.hadoop.conf.Configuration
 
-import org.apache.spark.Logging
+import org.apache.spark.{Logging, SparkConf}
 import org.apache.spark.deploy.SparkSubmitUtils
 import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.hive.HiveContext
@@ -41,6 +42,8 @@ private[hive] object IsolatedClientLoader extends Logging {
   def forVersion(
       hiveMetastoreVersion: String,
       hadoopVersion: String,
+      sparkConf: SparkConf,
+      hadoopConf: Configuration,
       config: Map[String, String] = Map.empty,
       ivyPath: Option[String] = None,
       sharedPrefixes: Seq[String] = Seq.empty,
@@ -76,7 +79,9 @@ private[hive] object IsolatedClientLoader extends Logging {
 
     new IsolatedClientLoader(
       version = hiveVersion(hiveMetastoreVersion),
+      sparkConf = sparkConf,
       execJars = files,
+      hadoopConf = hadoopConf,
       config = config,
       sharesHadoopClasses = sharesHadoopClasses,
       sharedPrefixes = sharedPrefixes,
@@ -146,6 +151,8 @@ private[hive] object IsolatedClientLoader extends Logging {
  */
 private[hive] class IsolatedClientLoader(
     val version: HiveVersion,
+    val sparkConf: SparkConf,
+    val hadoopConf: Configuration,
     val execJars: Seq[URL] = Seq.empty,
     val config: Map[String, String] = Map.empty,
     val isolationOn: Boolean = true,
@@ -204,6 +211,7 @@ private[hive] class IsolatedClientLoader(
             val classFileName = name.replaceAll("\\.", "/") + ".class"
             if (isBarrierClass(name)) {
               // For barrier classes, we construct a new copy of the class.
+              //  but fall back in case the class is not found.
               val bytes = IOUtils.toByteArray(baseClassLoader.getResourceAsStream(classFileName))
               logDebug(s"custom defining: $name - ${util.Arrays.hashCode(bytes)}")
               defineClass(name, bytes, 0, bytes.length)
@@ -213,9 +221,14 @@ private[hive] class IsolatedClientLoader(
             } else {
               // For shared classes, we delegate to baseClassLoader.
               logDebug(s"shared class: $name")
-              baseClassLoader.loadClass(name)
+              try {
+               baseClassLoader.loadClass(name)
+            } catch {
+              case _: ClassNotFoundException =>
+             super.loadClass(name, resolve)
             }
           }
+         }
         }
       } else {
         baseClassLoader
@@ -235,7 +248,7 @@ private[hive] class IsolatedClientLoader(
   /** The isolated client interface to Hive. */
   private[hive] def createClient(): ClientInterface = {
     if (!isolationOn) {
-      return new ClientWrapper(version, config, baseClassLoader, this)
+      return new ClientWrapper(version, config, sparkConf, hadoopConf, baseClassLoader, this)
     }
     // Pre-reflective instantiation setup.
     logDebug("Initializing the logger to avoid disaster...")
@@ -246,7 +259,7 @@ private[hive] class IsolatedClientLoader(
       classLoader
         .loadClass(classOf[ClientWrapper].getName)
         .getConstructors.head
-        .newInstance(version, config, classLoader, this)
+        .newInstance(version, config, sparkConf, hadoopConf, classLoader, this)
         .asInstanceOf[ClientInterface]
     } catch {
       case e: InvocationTargetException =>
@@ -255,7 +268,7 @@ private[hive] class IsolatedClientLoader(
           throw new ClassNotFoundException(
             s"$cnf when creating Hive client using classpath: ${execJars.mkString(", ")}\n" +
             "Please make sure that jars for your version of hive and hadoop are included in the " +
-            s"paths passed to ${HiveContext.HIVE_METASTORE_JARS}.")
+            s"paths passed to ${HiveContext.HIVE_METASTORE_JARS.key}.", e)
         } else {
           throw e
         }

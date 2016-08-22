@@ -19,15 +19,15 @@ package org.apache.spark.sql.hive.client
 
 import java.io.File
 
-import org.apache.hadoop.util.VersionInfo
-
 import org.apache.spark.sql.hive.HiveContext
-import org.apache.spark.{Logging, SparkFunSuite}
+import org.apache.spark.{Logging, SparkFunSuite, SparkConf}
 import org.apache.spark.sql.catalyst.expressions.{NamedExpression, Literal, AttributeReference, EqualTo}
 import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.tags.ExtendedHiveTest
 import org.apache.spark.util.Utils
+import org.apache.hadoop.util.VersionInfo
+import org.apache.hadoop.conf.Configuration
 
 /**
  * A simple set of tests that call the methods of a hive ClientInterface, loading different version
@@ -58,6 +58,8 @@ class VersionsSuite extends SparkFunSuite with Logging {
     val badClient = IsolatedClientLoader.forVersion(
       hiveMetastoreVersion = HiveContext.hiveExecutionVersion,
       hadoopVersion = VersionInfo.getVersion,
+      sparkConf = new SparkConf(),
+      hadoopConf = new Configuration(),
       config = buildConf(),
       ivyPath = ivyPath).createClient()
     val db = new HiveDatabase("default", "")
@@ -92,6 +94,8 @@ class VersionsSuite extends SparkFunSuite with Logging {
         IsolatedClientLoader.forVersion(
           hiveMetastoreVersion = "13",
           hadoopVersion = VersionInfo.getVersion,
+          sparkConf = new SparkConf(),
+          hadoopConf = new Configuration(),
           config = buildConf(),
           ivyPath = ivyPath).createClient()
       }
@@ -111,6 +115,8 @@ class VersionsSuite extends SparkFunSuite with Logging {
         IsolatedClientLoader.forVersion(
           hiveMetastoreVersion = version,
           hadoopVersion = VersionInfo.getVersion,
+          sparkConf = new SparkConf(),
+          hadoopConf = new Configuration(),
           config = buildConf(),
           ivyPath = ivyPath).createClient()
     }
